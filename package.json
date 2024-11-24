@@ -1,0 +1,17 @@
+{
+  "name": "fitplan-api",
+  "version": "1.0.0",
+  "description": "Custom API for FitPlan",
+  "main": "FitPlan-API.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "keywords": [],
+  "dependencies": {
+    "fs": "^0.0.1-security",
+    "http": "^0.0.1-security",
+    "url": "^0.11.4"
+  }
+}
