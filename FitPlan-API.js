@@ -2,6 +2,7 @@ const http = require('http');
 const url = require('url');
 const fs = require('fs');
 const crypto = require('crypto');
+const path = require('path');
 
 // Configuration
 const CONFIG = {
@@ -10,7 +11,8 @@ const CONFIG = {
   RATE_LIMIT: {
     WINDOW_MS: 15 * 60 * 1000, // 15 minutes
     MAX_REQUESTS: 100 // per window
-  }
+  },
+  KEYS_FILE: path.join(__dirname, 'api-keys.json')
 };
 
 // Load exercises data
@@ -23,9 +25,38 @@ try {
   process.exit(1);
 }
 
-// Simple API key storage - in production, use a database
-// Format: { "api-key": { createdAt: timestamp, rateLimit: {count: 0, resetAt: timestamp} } }
-const API_KEYS = {};
+// API key storage - load from file if exists
+let API_KEYS = {};
+
+// Load existing API keys
+function loadApiKeys() {
+  try {
+    if (fs.existsSync(CONFIG.KEYS_FILE)) {
+      const keysData = fs.readFileSync(CONFIG.KEYS_FILE, 'utf8');
+      API_KEYS = JSON.parse(keysData);
+      console.log(`Loaded ${Object.keys(API_KEYS).length} API keys from storage`);
+    } else {
+      console.log('No API keys file found, starting with empty key store');
+      API_KEYS = {};
+    }
+  } catch (error) {
+    console.error('Error loading API keys:', error);
+    API_KEYS = {};
+  }
+}
+
+// Save API keys to file
+function saveApiKeys() {
+  try {
+    fs.writeFileSync(CONFIG.KEYS_FILE, JSON.stringify(API_KEYS, null, 2));
+    console.log('API keys saved to file');
+  } catch (error) {
+    console.error('Error saving API keys:', error);
+  }
+}
+
+// Initialize keys
+loadApiKeys();
 
 // Generate a new API key
 const generateApiKey = () => {
@@ -37,6 +68,10 @@ const generateApiKey = () => {
       resetAt: Date.now() + CONFIG.RATE_LIMIT.WINDOW_MS
     }
   };
+  
+  // Save keys to disk
+  saveApiKeys();
+  
   return apiKey;
 };
 
@@ -45,8 +80,8 @@ const validateApiKey = (req, res) => {
   const parsedUrl = url.parse(req.url, true);
   const apiKey = parsedUrl.query.apiKey || req.headers['x-api-key'];
   
-  // Skip validation for documentation route
-  if (parsedUrl.pathname === '/docs') {
+  // Skip validation for public routes
+  if (parsedUrl.pathname === '/docs' || parsedUrl.pathname === '/get-api-key') {
     return true;
   }
   
@@ -62,6 +97,8 @@ const validateApiKey = (req, res) => {
   if (Date.now() > keyData.rateLimit.resetAt) {
     keyData.rateLimit.count = 0;
     keyData.rateLimit.resetAt = Date.now() + CONFIG.RATE_LIMIT.WINDOW_MS;
+    // Save the updated rate limit
+    saveApiKeys();
   }
   
   // Increment and check
@@ -73,6 +110,9 @@ const validateApiKey = (req, res) => {
     }, 429);
     return false;
   }
+  
+  // Save the updated count
+  saveApiKeys();
   
   return true;
 };
@@ -184,18 +224,17 @@ const routes = {
     return [...new Set(exercises.map(ex => ex.target))].sort();
   },
   
-  // POST /admin/generateApiKey - Generate a new API key (admin only)
-  'POST /admin/generateApiKey': async (query, req) => {
-    // In a real app, this would have admin authentication
-    // For demo purposes, we're using a simple secret
-    const body = await parseBody(req);
-    
-    if (!body.adminSecret || body.adminSecret !== 'your-admin-secret') {
-      throw new Error('Unauthorized');
-    }
-    
+  // GET /get-api-key - Generate an API key for anyone
+  'GET /get-api-key': () => {
     const apiKey = generateApiKey();
-    return { apiKey };
+    return { 
+      apiKey, 
+      message: 'Your API key has been generated. Include this key with each request either as a query parameter (apiKey=key) or in the X-API-Key header.',
+      rateLimit: {
+        requestsPerWindow: CONFIG.RATE_LIMIT.MAX_REQUESTS,
+        windowMs: CONFIG.RATE_LIMIT.WINDOW_MS
+      }
+    };
   },
   
   // GET /docs - API documentation
@@ -204,7 +243,13 @@ const routes = {
       name: 'Exercise API',
       version: '1.0.0',
       description: 'API for accessing exercise data',
+      authentication: {
+        description: 'This API requires an API key. Get your free API key at /get-api-key',
+        apiKeyLocation: 'Query parameter "apiKey" or request header "X-API-Key"',
+        rateLimit: `${CONFIG.RATE_LIMIT.MAX_REQUESTS} requests per ${CONFIG.RATE_LIMIT.WINDOW_MS / (60 * 1000)} minutes`
+      },
       endpoints: [
+        { path: '/get-api-key', method: 'GET', description: 'Generate a free API key' },
         { path: '/exercises', method: 'GET', description: 'List exercises with optional filters' },
         { path: '/exercises/bodyPartList', method: 'GET', description: 'Get all unique body parts' },
         { path: '/exercises/equipmentList', method: 'GET', description: 'Get all unique equipment' },
@@ -264,8 +309,8 @@ const server = http.createServer(async (req, res) => {
     // Log request
     console.log(`${req.method} ${path} ${new Date().toISOString()}`);
     
-    // Validate API key for all routes except admin
-    if (!path.startsWith('/admin') && !validateApiKey(req, res)) {
+    // Validate API key
+    if (!validateApiKey(req, res)) {
       return;
     }
     
@@ -310,8 +355,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(CONFIG.PORT, () => {
   console.log(`Server running on port ${CONFIG.PORT}`);
   console.log(`API Documentation available at: http://localhost:${CONFIG.PORT}/docs`);
-  
-  // Generate an initial API key for testing
-  const initialKey = generateApiKey();
-  console.log(`Initial API key for testing: ${initialKey}`);
+  console.log(`Get an API key at: http://localhost:${CONFIG.PORT}/get-api-key`);
 });
