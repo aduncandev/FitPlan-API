@@ -8,10 +8,6 @@ const path = require('path');
 const CONFIG = {
   PORT: process.env.PORT || 3000,
   DEFAULT_LIMIT: 20,
-  RATE_LIMIT: {
-    WINDOW_MS: 15 * 60 * 1000, // 15 minutes
-    MAX_REQUESTS: 100 // per window
-  },
   KEYS_FILE: path.join(__dirname, 'api-keys.json')
 };
 
@@ -62,11 +58,7 @@ loadApiKeys();
 const generateApiKey = () => {
   const apiKey = crypto.randomBytes(24).toString('hex');
   API_KEYS[apiKey] = {
-    createdAt: Date.now(),
-    rateLimit: {
-      count: 0,
-      resetAt: Date.now() + CONFIG.RATE_LIMIT.WINDOW_MS
-    }
+    createdAt: Date.now()
   };
   
   // Save keys to disk
@@ -89,30 +81,6 @@ const validateApiKey = (req, res) => {
     sendResponse(res, { error: 'Invalid or missing API key' }, 401);
     return false;
   }
-  
-  // Check rate limit
-  const keyData = API_KEYS[apiKey];
-  
-  // Reset rate limit if needed
-  if (Date.now() > keyData.rateLimit.resetAt) {
-    keyData.rateLimit.count = 0;
-    keyData.rateLimit.resetAt = Date.now() + CONFIG.RATE_LIMIT.WINDOW_MS;
-    // Save the updated rate limit
-    saveApiKeys();
-  }
-  
-  // Increment and check
-  keyData.rateLimit.count++;
-  if (keyData.rateLimit.count > CONFIG.RATE_LIMIT.MAX_REQUESTS) {
-    sendResponse(res, { 
-      error: 'Rate limit exceeded',
-      resetAt: new Date(keyData.rateLimit.resetAt).toISOString()
-    }, 429);
-    return false;
-  }
-  
-  // Save the updated count
-  saveApiKeys();
   
   return true;
 };
@@ -229,11 +197,7 @@ const routes = {
     const apiKey = generateApiKey();
     return { 
       apiKey, 
-      message: 'Your API key has been generated. Include this key with each request either as a query parameter (apiKey=key) or in the X-API-Key header.',
-      rateLimit: {
-        requestsPerWindow: CONFIG.RATE_LIMIT.MAX_REQUESTS,
-        windowMs: CONFIG.RATE_LIMIT.WINDOW_MS
-      }
+      message: 'Your API key has been generated. Include this key with each request either as a query parameter (apiKey=key) or in the X-API-Key header.'
     };
   },
   
@@ -245,8 +209,7 @@ const routes = {
       description: 'API for accessing exercise data',
       authentication: {
         description: 'This API requires an API key. Get your free API key at /get-api-key',
-        apiKeyLocation: 'Query parameter "apiKey" or request header "X-API-Key"',
-        rateLimit: `${CONFIG.RATE_LIMIT.MAX_REQUESTS} requests per ${CONFIG.RATE_LIMIT.WINDOW_MS / (60 * 1000)} minutes`
+        apiKeyLocation: 'Query parameter "apiKey" or request header "X-API-Key"'
       },
       endpoints: [
         { path: '/get-api-key', method: 'GET', description: 'Generate a free API key' },
